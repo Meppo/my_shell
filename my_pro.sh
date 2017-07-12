@@ -1,6 +1,6 @@
 #!/bin/bash
 
-my_shell_ipc_path=/opt/work/my_script/shell_ipc
+my_shell_ipc_path=/opt/work/shell/shell_ipc
 
 quiet_mode=0
 

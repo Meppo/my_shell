@@ -1,66 +1,140 @@
 #!/bin/bash
 
-my_shell_ipc_path=${my_shell_ipc_path:=/opt/work/my_script/shell_ipc}
+my_shell_ipc_path=${my_shell_ipc_path:=/opt/work/shell/shell_ipc}
 logfile=${logfile:=/dev/stdout}
 source $my_shell_ipc_path/log.sh
 
+content_file_path=/opt/work/exchange_dir/copy.txt
+exit_no=1
+
 contents_array=(
-    #0
     "This is test content, you can use option --arg1 replace <arg1> --arg2 replace <arg2> , try it!"
-    #0
-    "tftp -r router.sh -g <ip>; chmod +x router.sh; ./router.sh ip <ip> && ./router.sh app devices_app && ./router.sh 0 "
-    #1
-    "ifconfig enp3s0 192.168.1.33; tftp -m binary -l 192.168.1.6 -c put ra288.bin"
-    #2
-    "export LD_LIBRARY_PATH=/app/<app>/bin/"
-    #3
-    "export LD_LIBRARY_PATH=/app/igd_network/bin/; /app/igd_network/bin/igd_network_client   &"
-    #4
-    "killall igd_network_app; export LD_LIBRARY_PATH=/app/igd_network/bin/; /app/igd_network/bin/igd_network_client   &"
-    #5
-    "export LD_LIBRARY_PATH=/app/igd_network/bin/; ./igd_network_server   &"
-    #6
-    "export LD_LIBRARY_PATH=/app/igd_network/bin/; ./igd_network_client   &"
-    #7
-    "export LD_LIBRARY_PATH=/app/igd_network/bin/; ./srv_test   &"
-    #8
-    "export LD_LIBRARY_PATH=/tmp/;/lib/; ./igd_network_client   &"
-    #9
-    "alsfm 1 <mac>"
 )
+
 contents_args=(
     "arg1 arg2"
-    "ip"    #0
-    "null"  #1
-    "app"   #2
-    "null"  #3
-    "null"  #4
-    "null"  #5
-    "null"  #6
-    "null"  #7
-    "null"  #8
-    "mac"   #9
 )
+
 contents_num=${#contents_array[@]}
+
+function read_history_contents_from_file()
+{
+    local line
+    local args
+
+    if [ ! -f "$content_file_path" ];then
+        return 0
+    fi
+
+    while read line 
+    do
+        if [ -z "$line" ];then
+            continue
+        fi
+
+        if [ "${line:0:1}" = "#" ];then
+            continue;
+        fi
+
+        contents_array+=("$line")
+
+        args=`echo "$line" | grep '<\([^<>]*\)>' -o  | tr '<>\n' ' '`
+        if [ -z "$args" ];then
+            args="null"
+        fi
+        contents_args+=("$args")
+    done < $content_file_path
+
+    contents_num=${#contents_array[@]}
+}
+
+function save_content_to_file()
+{
+    new_line=$1
+    tmp_array=
+
+    if [ -z "$new_line" ];then
+        return 0
+    fi
+
+    if [ ! -f "$content_file_path" ];then
+        echo '' > $content_file_path
+        if [ ! -f "$content_file_path" ];then
+            Error "create file $content_file_path failed"
+            return 1
+        fi
+    fi
+
+    #del extra space at tail
+    new_line=`echo "$new_line" | sed 's/^ *//g ; s/ *$//g'`
+
+    while read line 
+    do
+        if [ -z "$line" ];then
+            continue
+        fi
+
+        if [ "${line:0:1}" = "#" ];then
+            continue;
+        fi
+
+        if [ "$new_line" = "$line" ];then
+            Debug "have exist, no need save again."
+            return 0
+        fi
+
+        tmp_array+=("$line")
+    done < $content_file_path
+
+    echo "" >> $content_file_path
+    echo "$new_line" >> $content_file_path
+}
+
+function del_content_from_file()
+{
+    local new_line=$1
+    local str
+
+    if [ -z "$new_line" -o  ! -f "$content_file_path" ];then
+        return 0
+    fi
+
+    # del the content
+    str="sed -i '/^$new_line$/d' $content_file_path"
+    eval $str
+
+    #del duplicate null line
+    sed -i '/^$/{N ; /^\n$/D}' $content_file_path
+    return $?
+}
+
 
 function copy_usage()
 {
     echo "NAME:"
-    echo "  ./$0 [index] [options]"
+    echo "  $0 [index] [options]"
     echo ""
     echo "DESCRIPTION:"
     echo " the script used to copy the data with [index] to clipboard, "
     echo "      then you can paste the content whit middle mouse or SHIFT+INSERT."
     echo ""
     echo "Index-Content list:"
+    echo "  read content list from the file copy.txt, you can use option -a/-d add/del the content."
+    echo ""
     local i=0
     while [ $i -lt $contents_num ]
     do
         echo "  $i: ${contents_array[$i]}"
+        if [ "${contents_args[$i]}" != "null" ];then
+            echo "      args: ${contents_args[$i]}"
+        fi
         let i++
     done
     echo ""
     echo "OPTIONS:"
+    echo "  -a <content>: add new content to file[copy.txt], you can copy it with index after add ."
+    echo "  -d <content>: del content from file[copy.txt]"
+    echo ""
     echo "  some sentences need change special param with options:"
     echo "  --ip=<value>"
     echo "     some sentences need ip. will use the <value> replace <ip> "
@@ -68,7 +142,9 @@ function copy_usage()
     echo "  --app=<value>"
     echo ""
     echo "EXAMPLES:"
-    echo "  ./$0 0 arg1=test_value1 arg2=test_value2"
+    echo "  $0 0 --arg1=test_value1 --arg2=test_value2"
+    echo "   then you can paste the content with middle mouse or SHIFT+INSERT: "
+    echo "     This is test content, you can use option --arg1 replace test_value1 --arg2 replace test_value2 , try it!"
 }
 
 function copy_func()
@@ -82,6 +158,8 @@ function copy_func()
 # do things we need to do when excute this script directly,not source this script.
 #   if source this script by other scripts, FUNCNAME[]: source main
 if [ "${FUNCNAME[0]}" = "main" ];then
+
+read_history_contents_from_file
 
 if [ $# -lt 1 ];then
     Error "too few argus"
@@ -119,7 +197,7 @@ uniq_options=${uniq_options#*,}
 C_Info "all_valid_options: $uniq_options"
 
 #parse long options and save value
-TEMP=`getopt -o "h" -l $uniq_options \
+TEMP=`getopt -o "ha:d:" -l $uniq_options \
      -n "$0" -- "$@"`
 
 if [ $? != 0 ] ; then echo "Terminating..." >&2 ; exit 1 ; fi
@@ -153,6 +231,36 @@ do
     if [ "$1" = "-h" ];then
         copy_usage
         exit 0
+    elif [ "$1" = "-a" ];then
+
+        save_content_to_file "$2"
+        statu=$?
+        if [ $statu -ne 0 ];then
+            Error "Save content to $content_file_path failed, exit status:$statu !"
+            exit 6
+        fi
+        Info "Save content to $content_file_path success."
+        exit 0
+        break
+    elif [ "$1" = "-d" ];then
+        if [ $2 -lt 0 -o $2 -ge $contents_num ];then
+            Error "Error content index[$2]."
+
+            exit $exit_no
+            let exit_no++
+        fi
+
+        del_content_from_file "${contents_array[$2]}"
+        statu=$?
+        if [ $statu -ne 0 ];then
+            Error "Del content from $content_file_path failed, exit status:$statu !"
+
+            exit $exit_no
+            let exit_no++
+        fi
+        Info "Del content[index=$2] from $content_file_path success."
+        exit 0
+        break
     elif [ "$1" = "--" ];then
         shift
         break
