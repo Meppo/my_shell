@@ -65,7 +65,7 @@ function save_content_to_file()
         fi
     fi
 
-    #del extra space at tail
+    #del extra space at head/tail
     new_line=`echo "$new_line" | sed 's/^ *//g ; s/ *$//g'`
 
     while read line 
