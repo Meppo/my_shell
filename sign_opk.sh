@@ -1,89 +1,70 @@
 #!/bin/bash
 
-my_shell_ipc_path=/opt/work/my_script/shell_ipc
-source $my_shell_ipc_path/log.sh
-source $my_shell_ipc_path/bar.sh
-
-work_path=/opt/work/N360
-temp_sign=0
-temp_sign_dir=
-dst_path=
-make_args=
-quiet_mode=0
 output=/dev/stdout
 logfile=/dev/stdout
 
-# dest file name prefix:
-#   e.g: /opt/work/exchange_dir/opk_dir/airlink_app_P1_20170621_1111.opk
-dst_prefix=`date "+%Y%m%d_%k%M"`
-DEF_DST_PATH=/opt/work/exchange_dir/opk_dir
+my_shell_ipc_path=${my_shell_ipc_path:=/opt/work/shell/shell_ipc}
+export my_shell_ipc_path=$my_shell_ipc_path
+
+logfile=${logfile:=/dev/stdout}
+export logfile=$logfile
+
+source $my_shell_ipc_path/log.sh
+
+root_dir=$(cd `dirname $0`; pwd)
+temp_sign_tool_dir=$root_dir/temp_sign_tool
+official_sign_tool_dir=$root_dir/official_sign_tool
 
 function usage()
 {
-    echo "Usage: ./opk_sign [options] [opk_name] [project_list...]"
-    echo "Options:"
-    echo "  -q: [no arg]quiet mode"
-    echo "  --temp-sign: [no arg]sign the opk with temp key"
-    echo "  --temp-sign-dir: the dir contain all temp keys"
-    echo "      sign_dir generation rule: tmp-sign-dir/[opk_name]/[opk_name]_[project_name]/ "
-    echo "      e.g: /tmp/opk_sign/airlink_app/airlink_app_P1/ "
-    echo "  --dst-path: the path restore the opk after compiled"
-    echo "  --make-args: compile extra arguments "
+    echo "Usage:"
+    echo ""
+    echo "  $0                                                          compile/sign opk script"
+    echo ""
+    echo "  $0 sign_f [*.opk] [sign_tool_dir]                           sign opk directly via give the sign tool dir"
+    echo "  $0 sign -[ot] [app_sign] [model] [app_center] [*.opk]       sign the opk with offical/temp sign tool"
+    echo "  $0 comp [app_sign] [model list...]                          compile the opk"
+    echo "  $0 comp_sign -[ot] [app_sign] [model] [app_center]          compile opk then sign with offical/temp sign tool"
+    echo "  $0 add_tool -[ot] [app_sign] [model] [app_center] [sign_too.tar.gz]"
+    echo "                                                              add offical/temp sign tool for opk"
+    echo "  $0 del_tool -[ot] [app_sign] [model] [app_center]           del offical/temp sign tool for opk"
+    echo "  $0 list_tool                                                show opk list support sign"
+    echo "  $0 help                                                     show this usage text"
+    echo ""
     echo "e.g:"
-    echo "  ./opk_sign airlink_app P0 P1 P2 P3 P4 "
-    echo "  ./opk_sign --temp-sign --make-args='CC=mips-linux-gcc install' airlink_app P0 P1 --dst-path=/tmp/opk_dir"
+    echo " 1) First add the temp sign tool for opk"
+    echo "  $0 add_tool -t airlink_app P1 360 airlink_app_P1_360.tar.gz"
+    echo ""
+    echo " 2) Then show the opk list support sign"
+    echo "  $0 list_tool"
+    echo ""
+    echo " 3) Comp and sign the opk with temp sign tool"
+    echo "  $0 comp_sign -t airlink_app P1"
+    echo ""
+    echo " Of course, you can sign opk have compiled directly with sign tool have support."
+    echo "  $0 sign -t airlink_app P1 360 airlink_app.opk"
+    echo ""
+    echo " Alternative, you can sign opk have compiled via give the sign tool dir directly,"
+    echo "      this commond no need give the [app_sign] [model] [app_center]."
+    echo "  $0 sign_f airlink_app.opk /opt/sign_tool_dir/airlink_app_P1_360"
+    echo ""
 }
-
-# opk default name rule:
-#   opk_name  dir_name=opk_name app_sign=opk_name opk_name=opk_name
-# e.g:
-#   opk_name: airlink_app  dir_name: airlink_app  opk_name: airlink_app
-#
-# special name for some opk
-declare -A spe_opk
-spe_opk=(
-    #[name]="dir_name  app_sign opk_name"
-    [multi_pppd]="multi_pppd multi_pppd multidial"
-    #airlink_app: default name rule
-)
-
-# project default path rule: 
-#   project_name  path=/opt/work/N360/N360_[project_name]/user/app/ env_script=/opt/work/N360/N360_[project_name]/user/make.sh
-# e.g: 
-#   project_name: P2  path=/opt/work/N360/N360_P2/user/app env_script=/opt/work/N360/N360_P2/user/make.sh
-#
-# special path dict for some project
-declare -A spe_projects
-spe_projects=(
-    #[project_name]="app_dir_path  env_script_path"
-    #P0:default path rule
-    [P1]="${work_path}/N360_TRUNK/user/app ${work_path}/N360_TRUNK/env.sh"
-    #P2:default path rule
-    #P3:default path rule
-    #P4:default path rule
-    [POWER4S_P0]="${work_path}/N360_P0_NETCORE/user/app ${work_path}/N360_P0_NETCORE/user/make.sh"
-    #N1:default path rule
-    [CTC_P1]="${work_path}/N360_BRANCH/user/app ${work_path}/N360_BRANCH/env.sh"
-)
 
 function check_and_mkdir()
 {
-    Debug "1 = $1 "
     if [ ! -d "$1" ];then
         mkdir -p $1
-    Debug "1 = $1 "
         if [ ! -d "$1" ];then
-    Debug "1 = $1 "
             return 1
         fi
     fi
 
-    Debug "1 = $1 "
     return 0
 }
 
-TEMP=`getopt  -o "q" -l dst-path:,temp-sign,temp-sign-dir:,make-args: \
-     -n "$0" -- "$@"`
+offical_flag=0 #default sign with temp sign tool
+
+TEMP=`getopt  -o "qoth" -l help -n "$0" -- "$@"`
 
 if [ $? != 0 ] ; then echo "Terminating..." >&2 ; exit 1 ; fi
 eval set -- "$TEMP"
@@ -91,35 +72,26 @@ C_Warn "CMDLINE: $@"
 C_Warn "ARGUS:"
 while true ; do
         case "$1" in
+                -h|--help)
+                    usage
+                    exit 0
+                    ;;
                 -q) 
                     quiet_mode=1
                     output=/dev/null
                     C_Debug "\tquiet_mode: $quiet_mode output=$output"
-                    shift 1;;
-                --dst-path)
-                    if ! check_and_mkdir $2;then
-                        Error "error dst_path[$2] $?."
-                        exit 1
-                    fi
-                    dst_path=$2
-                    C_Debug "\tdst-path: $2"
-                    shift 2;;
-                --temp-sign)
-                    temp_sign=1
-                    C_Debug "\ttemp-sign: $temp_sign"
-                    shift 1;;
-                --temp-sign-dir) 
-                    if ! check_and_mkdir $2;then
-                        Error "error temp-sign-dir[$2] $?."
-                        exit 1
-                    fi
-                    temp_sign_dir=$2
-                    C_Debug "\ttemp-sign-dir: $2"
-                    shift 2;;
-                --make-args)
-                    make_args=$2
-                    C_Debug "\tmake-args: $2"
-                    shift 2;;
+                    shift 1
+                    ;;
+                -o)
+                    offical_flag=1
+                    C_Debug "\twith official sign tool"
+                    shift 1
+                    ;;
+                -t)
+                    offical_flag=0
+                    C_Debug "\twith temp sign tool"
+                    shift 1
+                    ;;
                 --)
                     shift
                     break ;;
@@ -129,6 +101,462 @@ while true ; do
         esac
 done
 C_Warn "================================================================\n"
+
+Debug "args: $@ "
+
+#
+# args:
+#   $1: opk path
+#   $2: sign tool directory
+#
+# return:
+#   0: SUCCESS
+#   >0: failed
+#
+function sign_opk_fast()
+{
+    local _opk_path=$1
+    local _sign_tool_dir=$2
+
+    if [ ! -f "$_opk_path" ];then
+        Error "error opk path[$_opk_path]: not exist or not a regular file"
+        return 1
+    fi
+
+    if [ ! -d "$_sign_tool_dir" -o ! -f "$_sign_tool_dir/make_sign.sh" ];then
+        Error "error sign tool dir[$_sign_tool_dir]: not dir or make_sign.sh not exist."
+        return 1
+    fi
+
+    # make_sign.sh need opk absolute path
+    _opk_path=$(cd $(dirname $_opk_path); pwd)/$(basename $_opk_path)
+
+    # do sign
+    {
+        cd $_sign_tool_dir \
+            && chmod +x make_sign.sh \
+            && ./make_sign.sh $_opk_path > $output 2>&1 &
+    }  > $output 2>&1
+    wait $!
+    st=$?
+
+    if [ $st -ne 0 ];then
+        Error "sign [$_opk_path] with [$_sign_tool_dir] failed, exit status=$st."
+    fi
+
+    C_Info "sign [$_opk_path] with [$_sign_tool_dir] SUCCESS."
+    return 0
+}
+
+#
+# args:
+#    $1: appsign
+#    $2: model
+#    $3: app_center
+# return value with args:
+#    $4: sign tool directory
+#
+function get_sign_tool_path()
+{
+    local app_sign=$1
+    local model=$2
+    local app_center=$3
+
+    local __sign_tool_dir=$4
+
+    local _app_sign=
+    local _model=
+    local _dir=
+    local _res=
+    local _root_search_dir=
+
+    if [ $offical_flag -ne 0 ];then
+        _root_search_dir=$official_sign_tool_dir
+    else
+        _root_search_dir=$temp_sign_tool_dir
+    fi
+
+    # sign tool directory rule:
+    #       sign_too_root_dir/app_sign/model/${app_sign}_${model}_${app_center}
+    # 
+    # begin match: app_sign
+    for _app_sign in `ls $_root_search_dir`
+    do
+        if [ "$_app_sign" != "$app_sign" ];then
+            continue
+        fi
+
+        if [ ! -d "$_root_search_dir/$_app_sign" ];then
+            continue;
+        fi
+
+        # match: model
+        for _model in `ls "$_root_search_dir/$_app_sign"`
+        do
+            if [ "$model" != "$_model" ];then
+                continue
+            fi
+
+            if [ ! -d "$_root_search_dir/$_app_sign/$_model" ];then
+                continue;
+            fi
+
+            # find dir: ${app_sign}_${model}_${app_center}
+            for _dir in `ls "$_root_search_dir/$_app_sign/$_model"`
+            do
+                if [ ! -d "$_root_search_dir/$_app_sign/$_model/$_dir" ];then
+                    continue;
+                fi
+                _dir=$(basename $_dir)
+
+                res=$(echo $_dir | grep -Eo "$app_center")
+                if [ -n "$res" ];then
+                    C_Info "find sign tool dir[$_dir] for appsign[$app_sign] model[$model] app_center[$app_center]"
+                    eval $__sign_tool_dir="'$_root_search_dir/$_app_sign/$_model/$_dir'"
+                    return 0
+                else
+                    C_Info "Can't find sign tool dir[$_dir] for appsign[$appsign] model[$model] app_center[$app_center]"
+                fi
+            done
+        done
+    done
+
+    return 1
+}
+
+#
+# args:
+#   $1: app_sign
+#   $2: model
+#   $3: opk path
+#
+# return:
+#   0: SUCCESS
+#   >0: failed
+#
+function sign_opk()
+{
+    local _app_sign=$1
+    local _model=$2
+    local _app_center=$3
+    local _opk_path=$4
+    local _sign_tool_dir=
+
+    # null argus
+    if [ -z "$_app_sign" -o -z "$_model" \
+            -o -z "$_app_center" -o -z "$_opk_path" ];then
+        Error "few argus: app_sign:$_app_sign model:$_model app_center:$_app_center _opk_path:$_opk_path"
+        usage
+        return 1
+    fi
+
+    if [ ! -f "$_opk_path" ];then
+        Error "error opk path[$_opk_path]: not exist or not a regular file"
+        return 2
+    fi
+
+    get_sign_tool_path $_app_sign $_model $_app_center _sign_tool_dir
+    if [ $? -ne 0 ];then
+        Error "have no sign tool to sign  app_sign:$_app_sign model:$_model app_center:$_app_center _opk_path:$_opk_path ..."
+        return 3
+    fi
+
+    sign_opk_fast $_opk_path $_sign_tool_dir
+    if [ $? -ne 0 ];then
+        return 4
+    fi
+
+    return 0
+}
+
+function show_tool_list()
+{
+    local _app_sign=
+    local _model=
+    local _dir=
+    local _res=
+    local _root_search_dir=
+
+    C_Info "APP_SIGN\tMODEL\tAPP_CENTER\tDIR\n"
+
+    C_Info "[Official]"
+    _root_search_dir=$official_sign_tool_dir
+    for _app_sign in `ls $_root_search_dir`
+    do
+        if [ ! -d "$_root_search_dir/$_app_sign" ];then
+            continue;
+        fi
+
+        for _model in `ls "$_root_search_dir/$_app_sign"`
+        do
+            if [ ! -d "$_root_search_dir/$_app_sign/$_model" ];then
+                continue;
+            fi
+
+            for _dir in `ls "$_root_search_dir/$_app_sign/$_model"`
+            do
+                if [ ! -d "$_root_search_dir/$_app_sign/$_model/$_dir" ];then
+                    continue;
+                fi
+                _dir=$(basename $_dir)
+
+                res=$(echo $_dir | grep -Eo '(netcore|360)')
+                if [ -z "$res" ];then
+                    C_Info "$_app_sign\t$_model\t360\t\t$_dir"
+                else
+                    C_Info "$_app_sign\t$_model\t360\t\t$_dir"
+                fi
+            done
+        done
+    done
+    C_Info ""
+
+    C_Info "[Temp]"
+    _root_search_dir=$temp_sign_tool_dir
+    for _app_sign in `ls $_root_search_dir`
+    do
+        if [ ! -d "$_root_search_dir/$_app_sign" ];then
+            continue;
+        fi
+
+        for _model in `ls "$_root_search_dir/$_app_sign"`
+        do
+            if [ ! -d "$_root_search_dir/$_app_sign/$_model" ];then
+                continue;
+            fi
+
+            for _dir in `ls "$_root_search_dir/$_app_sign/$_model"`
+            do
+                if [ ! -d "$_root_search_dir/$_app_sign/$_model/$_dir" ];then
+                    continue;
+                fi
+                _dir=$(basename $_dir)
+
+                res=$(echo $_dir | grep -Eo '(netcore|360)')
+                if [ -z "$res" ];then
+                    C_Info "$_app_sign\t$_model\t360\t\t$_dir"
+                else
+                    C_Info "$_app_sign\t$_model\t360\t\t$_dir"
+                fi
+            done
+        done
+    done
+    C_Info ""
+
+    return 0
+}
+
+#
+# add/replace sign tool
+# args:
+#   $1: app_sign
+#   $2: model
+#   $3: app center
+#   $4: sign tool *.tar.gz/directory
+#
+# return:
+#   0: SUCCESS
+#   >0: failed
+#
+function add_sign_tool()
+{
+    local _app_sign=$1
+    local _model=$2
+    local _app_center=$3
+    local _sign_tool=$4
+    local _tmp_dir=$root_dir/temp_sign_opk_dir_$$
+    local _sign_tool_dir=
+    local _last_sign_tool_dir=
+
+    # null argus
+    if [ -z "$_app_sign" -o -z "$_model" \
+            -o -z "$_app_center" -o -z "$_sign_tool" ];then
+        Error "few argus: app_sign:$_app_sign model:$_model app_center:$_app_center sign_tool:$_sign_tool"
+        usage
+        return 1
+    fi
+
+    # sign tool check
+    if [ -f "$_sign_tool" ];then
+        mkdir $_tmp_dir && tar -zxf $_sign_tool -C $_tmp_dir
+        if [ $? -ne 0 ];then
+            Error "extract sign_tool[$_sign_tool] failed."
+            rm -rf $_tmp_dir
+            return 2
+        fi
+
+        _sign_tool_dir=`find $_tmp_dir -name "make_sign.sh" | xargs dirname`
+        if [ $? -ne 0 ];then
+            Error "Error sign_tool[$_sign_tool]: can't find the script make_sign.sh..."
+            rm -rf $_tmp_dir
+            return 3
+        fi
+    elif [ -d "$_sign_tool" ];then
+
+        _sign_tool_dir=`find $_sign_tool -maxdepth 1 -name "make_sign.sh" | xargs dirname`
+        if [ $? -ne 0 ];then
+            Error "Error sign_tool[$_sign_tool]: can't find the script make_sign.sh..."
+            rm -rf $_tmp_dir
+            return 3
+        fi
+
+        cp -rf $_sign_tool $_tmp_dir
+        _sign_tool_dir=$_tmp_dir
+    else
+        Error "Error sign_tool[$_sign_tool]: not exist or is not dir."
+        return 3
+    fi
+
+    if [ $offical_flag -ne 0 ];then
+        _last_sign_tool_dir=$official_sign_tool_dir/$_app_sign/$_model/${_app_sign}_${_model}_${_app_center}
+    else
+        _last_sign_tool_dir=$temp_sign_tool_dir/$_app_sign/$_model/${_app_sign}_${_model}_${_app_center}
+    fi
+
+    if [ -d "$_last_sign_tool_dir" ];then
+        rm -rf $_last_sign_tool_dir
+        C_Info "del old [$_last_sign_tool_dir] first."
+    fi
+
+    mkdir -p `dirname $_last_sign_tool_dir` && mv $_sign_tool_dir $_last_sign_tool_dir
+    if [ $? -ne 0 ];then
+        Error "mv [$_sign_tool] to [$_last_sign_tool_dir] failed..."
+        rm -rf $_tmp_dir
+        return 4
+    fi
+    rm -rf $_tmp_dir
+
+    C_Info "add sign tool for app_sign[$_app_sign] model[$_model] app_center[$_app_center] => $_last_sign_tool_dir SUCCESS."
+    return 0
+}
+
+# del sign tool
+# args:
+#   $1: app_sign
+#   $1: model
+#   $2: app_center
+# return:
+#   0: success
+#   >0: failed
+#
+function del_sign_tool()
+{
+    local _app_sign=$1
+    local _model=$2
+    local _app_center=$3
+    local _last_sign_tool_dir=
+    local res=
+
+    if [ -z "$_app_sign" ];then
+        Error "app_sign is null"
+        usage
+        return 1
+    fi
+
+    if [ $offical_flag -ne 0 ];then
+        _last_sign_tool_dir=$official_sign_tool_dir
+    else
+        _last_sign_tool_dir=$temp_sign_tool_dir
+    fi
+
+    if [ -z "$_model" ];then
+        _last_sign_tool_dir=$_last_sign_tool_dir/$_app_sign
+    else
+        if [ -z "$_app_center" ];then
+            _last_sign_tool_dir=$_last_sign_tool_dir/$_app_sign/$_model
+        else
+            _last_sign_tool_dir=$_last_sign_tool_dir/$_app_sign/$_model/${_app_sign}_${_model}_${_app_center}
+        fi
+    fi
+
+    if [ -d "$_last_sign_tool_dir" ];then
+        C_Info "del dir[$_last_sign_tool_dir] for appsign[$_app_sign] model[$_model] app_center[$_app_center]."
+        rm -rf $_last_sign_tool_dir
+    else
+        C_Info "no dir[$_last_sign_tool_dir] to del for appsign[$_app_sign] model[$_model] app_center[$_app_center]."
+    fi
+
+    if [ -n "$_app_center" ];then
+        _last_sign_tool_dir=$(dirname $_last_sign_tool_dir)
+        res=$(ls $_last_sign_tool_dir)
+
+        # empty dir, del this dir
+        if [ -z "$res" ];then
+            C_Info "del empty dir[$_last_sign_tool_dir] for app_sign[$_app_sign] model[$_model]..."
+            rm -rf $_last_sign_tool_dir
+        fi
+    fi
+
+    if [ -n "$_model" ];then
+        _last_sign_tool_dir=$(dirname $_last_sign_tool_dir)
+        res=$(ls $_last_sign_tool_dir)
+
+        # empty dir, del this dir
+        if [ -z "$res" ];then
+            C_Info "del empty dir[$_last_sign_tool_dir] for app_sign[$_app_sign] model[$_model]..."
+            rm -rf $_last_sign_tool_dir
+        fi
+    fi
+
+    return 0
+}
+
+
+
+#    echo "  $0 sign -[ot] [app_sign] [model] [*.opk]                    sign the opk with offical/temp sign tool"
+#    echo "  $0 comp [app_sign] [model list...]                          compile the opk"
+#    echo "  $0 comp_sign -[ot] [app_sign] [model]                       compile opk then sign with offical/temp sign tool"
+#    echo "  $0 add_tool -[ot] [app_sign] [model] [sign_too.tar.gz]      add offical/temp sign tool for opk"
+#    echo "  $0 del_tool -[ot] [app_sign] [model]                        del offical/temp sign tool for opk"
+#    echo "  $0 list_tool                             
+if [ "$1" = "sign" ];then
+    shift 1
+    if [ $# -lt 4 ];then
+        Error "too few args for cmd[sign]: $@ "
+        usage
+        exit 1
+    fi
+    sign_opk $@
+elif [ "$1" = "com" ];then
+    Debug "compile"
+elif [ "$1" = "comp_sign" ];then
+    Debug "compile sign"
+elif [ "$1" = "add_tool" ];then
+    shift 1
+    if [ $# -lt 4 ];then
+        Error "too few args for cmd[add_tool]: $@ "
+        usage
+        exit 1
+    fi
+    add_sign_tool $@
+elif [ "$1" = "del_tool" ];then
+    shift 1
+    if [ $# -lt 1 ];then
+        Error "too few args for cmd[del_tool]: $@ "
+        usage
+        exit 1
+    fi
+    del_sign_tool $@
+elif [ "$1" = "list_tool" ];then
+    shift 1
+    show_tool_list $@
+elif [ "$1" = "sign_f" ];then
+    shift 1
+    if [ $# -lt 2 ];then
+        Error "too few args for cmd[sign_f]: $@ "
+        usage
+        exit 1
+    fi
+    sign_opk_fast $@
+elif [ "$1" = "help" ];then
+    usage
+else
+    Error "error cmd[$1] ..."
+    usage
+    exit 2
+fi
+
+exit 0
 
 if [ $temp_sign -ne 0 -a -z "$temp_sign_dir" ];then
     Error "Need give the temp_sign_dir with option: --temp-sign-dir "
@@ -179,6 +607,7 @@ function get_project_path()
     local __envpath_var=$4
     local projects_value_arr=
 
+    # get special project path from the arr spe_projects[]
     for key in $(echo ${!spe_projects[*]})
     do
         if [ "$key" = "$1" ];then
@@ -190,6 +619,8 @@ function get_project_path()
         fi
     done
 
+    # project: P0  => N360_P0
+    # project: N1  => N360_N1
     eval $__appdirpath_var="'${work_path}/N360_$1/user/app'"
     eval $__envpath_var="'${work_path}/N360_$1/user/make.sh'"
 
