@@ -12,6 +12,13 @@ export logfile=$logfile
 
 source $my_shell_ipc_path/log.sh
 
+quiet_mode=${quiet_mode:=0}
+output=${output:=/dev/stdout}
+
+dst_path=${dst_path:=$root_dir}
+dst_prefix=${dst_prefix:=`date "+%Y%m%d_%H%M"`}
+make_args=${make_args:=}
+
 function usage()
 {
     echo "Usage:"
@@ -58,70 +65,6 @@ function check_and_mkdir()
     return 0
 }
 
-TEMP=`getopt  -o "qt:m:adl" -l dest:,make-args:,add,del,list \
-     -n "$0" -- "$@"`
-
-quiet_mode=0
-output=/dev/stdout
-
-dst_path=${dst_path:=$root_dir}
-dst_prefix=`date "+%Y%m%d_%H%M"`
-make_args=
-cmd=make #default action
-
-if [ $? != 0 ] ; then echo "Terminating..." >&2 ; exit 1 ; fi
-eval set -- "$TEMP"
-C_Warn "CMDLINE: $@"
-C_Warn "ARGUS:"
-while true ; do
-        case "$1" in
-                -q) 
-                    quiet_mode=1
-                    output=/dev/null
-                    C_Debug "\tquiet_mode: $quiet_mode output=$output"
-                    shift 1
-                    ;;
-                -t|--dest)
-                    if ! check_and_mkdir $2;then
-                        Error "error dst_path[$2] $?."
-                        exit 1
-                    fi
-                    # del last char '/'
-                    dst_path=`cd $2; pwd`
-                    C_Debug "\tdest: $2"
-                    shift 2
-                    ;;
-                -m|--make-args)
-                    make_args=$2
-                    C_Debug "\tmake-args: $2"
-                    shift 2
-                    ;;
-                -a|--add)
-                    cmd=add
-                    C_Debug "\tadd"
-                    shift 1
-                    ;;
-                -d|--del)
-                    cmd=del
-                    C_Debug "\tdel"
-                    shift 1
-                    ;;
-                -l|--list)
-                    cmd=list
-                    C_Debug "\tlist"
-                    shift 1
-                    ;;
-                --)
-                    shift
-                    break 
-                    ;;
-                *)
-                    echo "Unknow option: $1 $2"
-                    exit 1 
-                    ;;
-        esac
-done
-C_Warn "================================================================\n"
 
 list_support_opk()
 {
@@ -496,60 +439,159 @@ function get_compile_info()
     return 1
 }
 
+# 
+# args:
+#   $1: app_sign
+#   $2: model
+#   $3: make_args
+#   $4: dst_path
+#
+#return:
+#   $5: result_name
+#
 function compile_opk()
 {
     local app_sign=$1
-    local model=
+    local model=$2
+    local _make_args=$3
+    local _dst_path=$4
+
+    local __result_path=$5
+
     local opk_path=
     local env_path=
     local opk_name=
     local dst_opk_name=
     local dst_json_name=
 
+    get_compile_info $app_sign $model opk_path env_path opk_name
+    if [ $? -ne 0 ];then
+        Error "not support make the opk app_sign[$app_sign] model[$model]... "
+        C_Warn "Try \"$0 -l \" to show all opk support now"
+        C_Warn "Try \"$0 -a \" to add new opk compile info"
+        return 
+    fi
+
+    dst_opk_name=${_dst_path}/${app_sign}_${model}_${dst_prefix}.opk
+    dst_json_name=${_dst_path}/${app_sign}_${model}_${dst_prefix}.json
+
+    #Debug "${app_sign} ${model} => $opk_path $env_path $opk_name dst_opk_name=${dst_opk_name} dj=${dst_json_name}"
+
+    # compile opk
+    {
+        cd `dirname ${env_path}` \
+            && source ${env_path} `dirname ${env_path}` \
+            && echo "userdir=$USERDIR"\
+            && cd ${opk_path}\
+            && make clean && make $_make_args \
+            && if test -f $opk_name; then cp $opk_name ${dst_opk_name} ;\
+                cp app.json ${dst_json_name}; fi &
+    }  > $output 2>&1
+    wait $!
+    st=$?
+
+    if [ $st -ne 0 ];then
+        Error "Compile $app_sign for $model failed, exit st=$st."
+        return $st
+    fi
+
+    C_Info "Compile $app_sign for $model SUCCESS, dst_opk_name=${dst_opk_name}"
+
+    if [ -n "$__result_path" ];then
+       eval $__result_path="'$dst_opk_name'"
+    fi
+
+    return 0
+}
+
+# 
+# args:
+#   $1: app_sign
+#   $2,$3...: model list
+#
+# return:
+#
+#
+function compile_multi_opk()
+{
+    local app_sign=$1
+    local model=
+
     shift 1
 
     for model in $@
     do
-        opk_path=
-        env_path=
-        opk_name=
-
-        get_compile_info $app_sign $model opk_path env_path opk_name
+        compile_opk $app_sign $model "$make_args" "$dst_path" res
         if [ $? -ne 0 ];then
-            Error "not support make the opk app_sign[$app_sign] model[$model]... "
-            C_Warn "Try \"$0 -l \" to show all opk support now"
-            C_Warn "Try \"$0 -a \" to add new opk compile info"
             return 1
         fi
-
-        dst_opk_name=${dst_path}/${app_sign}_${model}_${dst_prefix}.opk
-        dst_json_name=${dst_path}/${app_sign}_${model}_${dst_prefix}.json
-
-        #Debug "${app_sign} ${model} => $opk_path $env_path $opk_name dst_opk_name=${dst_opk_name} dj=${dst_json_name}"
-
-        # compile opk
-        {
-            cd `dirname ${env_path}` \
-                && source ${env_path} `dirname ${env_path}` \
-                && echo "userdir=$USERDIR"\
-                && cd ${opk_path}\
-                && make clean && make $make_args \
-                && if test -f $opk_name; then cp $opk_name ${dst_opk_name} ;\
-                    cp app.json ${dst_json_name}; fi & 
-        }  > $output 2>&1
-        wait $!
-        st=$?
-
-        if [ $st -ne 0 ];then
-            Error "Compile $app_sign for $model failed, exit st=$st."
-            return $st
-        fi
-
-        Info "Compile $app_sign for $model SUCCESS, dst_opk_name=${dst_opk_name}"
     done
 
     return 0
 }
+
+# do things we need to do when excute this script directly,not source this script.
+#   if source this script by other scripts, FUNCNAME[]: source main
+if [ "${FUNCNAME[0]}" = "main" ];then
+
+cmd=make #default action
+
+TEMP=`getopt  -o "qt:m:adl" -l dest:,make-args:,add,del,list \
+     -n "$0" -- "$@"`
+
+if [ $? != 0 ] ; then echo "Terminating..." >&2 ; exit 1 ; fi
+eval set -- "$TEMP"
+C_Warn "CMDLINE: $@"
+C_Warn "ARGUS:"
+while true ; do
+        case "$1" in
+                -q) 
+                    quiet_mode=1
+                    output=/dev/null
+                    C_Debug "\tquiet_mode: $quiet_mode output=$output"
+                    shift 1
+                    ;;
+                -t|--dest)
+                    if ! check_and_mkdir $2;then
+                        Error "error dst_path[$2] $?."
+                        exit 1
+                    fi
+                    # del last char '/'
+                    dst_path=`cd $2; pwd`
+                    C_Debug "\tdest: $2"
+                    shift 2
+                    ;;
+                -m|--make-args)
+                    make_args=$2
+                    C_Debug "\tmake-args: $2"
+                    shift 2
+                    ;;
+                -a|--add)
+                    cmd=add
+                    C_Debug "\tadd"
+                    shift 1
+                    ;;
+                -d|--del)
+                    cmd=del
+                    C_Debug "\tdel"
+                    shift 1
+                    ;;
+                -l|--list)
+                    cmd=list
+                    C_Debug "\tlist"
+                    shift 1
+                    ;;
+                --)
+                    shift
+                    break 
+                    ;;
+                *)
+                    echo "Unknow option: $1 $2"
+                    exit 1 
+                    ;;
+        esac
+done
+C_Warn "================================================================\n"
 
 Debug " args: $@ root_dir=$root_dir cmd=$cmd"
 
@@ -575,7 +617,9 @@ elif [ "$cmd" = "make" ];then
         usage
         exit 2
     fi
-    compile_opk $@
+    compile_multi_opk $@
 fi
 
 exit $?
+
+fi #if [ "${FUNCNAME[0]}" = "main" ];then
