@@ -4,7 +4,7 @@ my_shell_ipc_path=${my_shell_ipc_path:=/opt/work/shell/shell_ipc}
 logfile=${logfile:=/dev/stdout}
 source $my_shell_ipc_path/log.sh
 
-content_file_path=/opt/work/exchange_dir/copy.txt
+content_file_path=~/copy.txt
 exit_no=1
 
 contents_array=(
@@ -15,12 +15,39 @@ contents_args=(
     "arg1 arg2"
 )
 
+contents_line_num=(
+    0
+)
+
 contents_num=${#contents_array[@]}
+
+function args_exist()
+{
+    local arg=$1
+    local cont_args_i
+
+    if [ -z "$arg" ];then
+        return 0
+    fi
+
+    for cont_args_i in $contents_args
+    do
+        echo "cont_args_i=$cont_args_i"
+        if [ "$args_i" = "$cont_args_i" ];then
+            echo "exist"
+            return 1
+        fi
+    done
+
+    return 0
+}
 
 function read_history_contents_from_file()
 {
     local line
     local args
+    local args_i
+    local line_num=0
 
     if [ ! -f "$content_file_path" ];then
         return 0
@@ -28,6 +55,7 @@ function read_history_contents_from_file()
 
     while read line 
     do
+        let line_num=$line_num+1
         if [ -z "$line" ];then
             continue
         fi
@@ -37,12 +65,20 @@ function read_history_contents_from_file()
         fi
 
         contents_array+=("$line")
+        contents_line_num+=("$line_num")
 
         args=`echo "$line" | grep '<\([^<>]*\)>' -o  | tr '<>\n' ' '`
         if [ -z "$args" ];then
             args="null"
+        else
+            for args_i in $args
+            do
+                args_exist $args_i
+                if [ $? -eq 0 ];then
+                    contents_args+=("$args_i")
+                fi
+            done
         fi
-        contents_args+=("$args")
     done < $content_file_path
 
     contents_num=${#contents_array[@]}
@@ -90,24 +126,48 @@ function save_content_to_file()
     echo "$new_line" >> $content_file_path
 }
 
+# args:
+#   $1: content index
+#     get index from ./copy.sh
 function del_content_from_file()
 {
-    local new_line=$1
-    local str
+    local m_index=$1
+    local m_linenum=
 
-    if [ -z "$new_line" -o  ! -f "$content_file_path" ];then
+    if [ ! -f "$content_file_path" ];then
         return 0
     fi
 
+    if [ -z "$m_index" ];then
+        return 1
+    fi
+    m_linenum=${contents_line_num[$m_index]}
+    if [ -z "m_linenum" ];then
+        return 2
+    fi
+
     # del the content
-    str="sed -i '/^$new_line$/d' $content_file_path"
-    eval $str
+    sed -i "${m_linenum}d" $content_file_path
 
     #del duplicate null line
     sed -i '/^$/{N ; /^\n$/D}' $content_file_path
     return $?
 }
 
+function show_all_content()
+{
+    echo "Index-Content list:"
+    echo "  read content list from the file copy.txt, you can use option -a/-d add/del the content."
+    local i=0
+    while [ $i -lt $contents_num ]
+    do
+        echo "  $i: ${contents_array[$i]}"
+        if [ "${contents_args[$i]}" != "null" ];then
+            echo "      args: ${contents_args[$i]}"
+        fi
+        let i++
+    done
+}
 
 function copy_usage()
 {
@@ -118,18 +178,7 @@ function copy_usage()
     echo " the script used to copy the data with [index] to clipboard, "
     echo "      then you can paste the content whit middle mouse or SHIFT+INSERT."
     echo ""
-    echo "Index-Content list:"
-    echo "  read content list from the file copy.txt, you can use option -a/-d add/del the content."
-    echo ""
-    local i=0
-    while [ $i -lt $contents_num ]
-    do
-        echo "  $i: ${contents_array[$i]}"
-        if [ "${contents_args[$i]}" != "null" ];then
-            echo "      args: ${contents_args[$i]}"
-        fi
-        let i++
-    done
+    show_all_content
     echo ""
     echo "OPTIONS:"
     echo "  -a <content>: add new content to file[copy.txt], you can copy it with index after add ."
@@ -157,7 +206,7 @@ function copy_func()
 
 # do things we need to do when excute this script directly,not source this script.
 #   if source this script by other scripts, FUNCNAME[]: source main
-if [ "${FUNCNAME[0]}" = "main" ];then
+if [ "${FUNCNAME[0]}" = "main" -o "${FUNCNAME[0]}" = "" ];then
 
 read_history_contents_from_file
 
@@ -193,11 +242,12 @@ for i in ${tmp_args[@]}
 do
     uniq_options=$uniq_options,${i}:
 done
+# deal chars before first ,
 uniq_options=${uniq_options#*,}
 C_Info "all_valid_options: $uniq_options"
 
 #parse long options and save value
-TEMP=`getopt -o "ha:d:" -l $uniq_options \
+TEMP=`getopt -o "lha:d:" -l $uniq_options \
      -n "$0" -- "$@"`
 
 if [ $? != 0 ] ; then echo "Terminating..." >&2 ; exit 1 ; fi
@@ -231,6 +281,9 @@ do
     if [ "$1" = "-h" ];then
         copy_usage
         exit 0
+    elif [ "$1" = "-l" ];then
+        show_all_content
+        exit 0
     elif [ "$1" = "-a" ];then
 
         save_content_to_file "$2"
@@ -250,7 +303,7 @@ do
             let exit_no++
         fi
 
-        del_content_from_file "${contents_array[$2]}"
+        del_content_from_file $2
         statu=$?
         if [ $statu -ne 0 ];then
             Error "Del content from $content_file_path failed, exit status:$statu !"
