@@ -70,6 +70,7 @@ function read_history_contents_from_file()
         args=`echo "$line" | grep '<\([^<>]*\)>' -o  | tr '<>\n' ' '`
         if [ -z "$args" ];then
             args="null"
+            contents_args+=("$args")
         else
             for args_i in $args
             do
