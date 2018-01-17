@@ -4,6 +4,7 @@ my_shell_ipc_path=${my_shell_ipc_path:=/opt/work/shell/shell_ipc}
 logfile=${logfile:=/dev/stdout}
 source $my_shell_ipc_path/log.sh
 
+# test data
 content_file_path=~/copy.txt
 exit_no=1
 
@@ -20,27 +21,6 @@ contents_line_num=(
 )
 
 contents_num=${#contents_array[@]}
-
-function args_exist()
-{
-    local arg=$1
-    local cont_args_i
-
-    if [ -z "$arg" ];then
-        return 0
-    fi
-
-    for cont_args_i in $contents_args
-    do
-        echo "cont_args_i=$cont_args_i"
-        if [ "$args_i" = "$cont_args_i" ];then
-            echo "exist"
-            return 1
-        fi
-    done
-
-    return 0
-}
 
 function read_history_contents_from_file()
 {
@@ -70,16 +50,9 @@ function read_history_contents_from_file()
         args=`echo "$line" | grep '<\([^<>]*\)>' -o  | tr '<>\n' ' '`
         if [ -z "$args" ];then
             args="null"
-            contents_args+=("$args")
-        else
-            for args_i in $args
-            do
-                args_exist $args_i
-                if [ $? -eq 0 ];then
-                    contents_args+=("$args_i")
-                fi
-            done
         fi
+        args=`echo $args | tr -s ' ' '\n' | sort | uniq | tr '\n' ' '`
+        contents_args+=("$args")
     done < $content_file_path
 
     contents_num=${#contents_array[@]}
@@ -160,10 +133,12 @@ function show_all_content()
     echo "Index-Content list:"
     echo "  read content list from the file copy.txt, you can use option -a/-d add/del the content."
     local i=0
+    local trim_buf=
     while [ $i -lt $contents_num ]
     do
         echo "  $i: ${contents_array[$i]}"
-        if [ "${contents_args[$i]}" != "null" ];then
+        trim_buf=`echo "${contents_args[$i]}" | tr -d ' '`
+        if [ "$trim_buf" != "null" ];then
             echo "      args: ${contents_args[$i]}"
         fi
         let i++
@@ -217,24 +192,8 @@ if [ $# -lt 1 ];then
     exit 0
 fi
 
-# del duplicate args
-i=0
-j=0
-tmp_args=(${contents_args[@]})
-for ((i=0;i<$contents_num;i++))
-do
-    if [ "${tmp_args[i]}" = "null" ];then
-        unset tmp_args[i]
-        continue;
-    fi
-
-    for ((j=$contents_num-1;j>i;j--))
-    do
-        if [ "${tmp_args[i]}" = "${tmp_args[j]}" ];then
-            unset tmp_args[j]
-        fi
-    done
-done
+# del duplicate args then transform the result into array
+tmp_args=(`echo ${contents_args[@]} | tr -s ' ' '\n' | sort | uniq | tr -d 'null' | tr -s '\n' ' '`)
 
 i=0
 uniq_num=${#tmp_args[@]}
